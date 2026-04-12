@@ -1,0 +1,28 @@
+# Build & Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+
+# Git internals
+.git/
+
+# Graphify eigene Outputs (kein Re-Ingest)
+graphify-out/
+
+# Temporäre Dateien
+*.log
+*.tmp
+.DS_Store
+
+# Grosse Binärdateien
+*.zip
+*.tar.gz
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
