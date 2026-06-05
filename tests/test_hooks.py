@@ -1,9 +1,10 @@
 """Tests for hooks.py - git hook install/uninstall."""
 import os
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 import pytest
-from graphify.hooks import install, uninstall, status, _HOOK_MARKER, _CHECKOUT_MARKER
+from graphify.hooks import install, uninstall, status, _hooks_dir, _HOOK_MARKER, _CHECKOUT_MARKER
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
@@ -119,7 +120,99 @@ def test_status_shows_both_hooks(tmp_path):
     assert result.count("installed") >= 2
 
 
+
+def test_hooks_dir_resolves_relative_git_hooks_path(tmp_path, monkeypatch):
+    repo = _make_git_repo(tmp_path)
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=".git/hooks\n")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert _hooks_dir(repo) == (repo / ".git" / "hooks").resolve()
+
+
+def test_hooks_dir_rejects_multiline_git_output(tmp_path, monkeypatch):
+    repo = _make_git_repo(tmp_path)
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="--path-format=absolute\n.git/hooks\n")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert _hooks_dir(repo) == repo / ".git" / "hooks"
+    assert not (repo / "--path-format=absolute\n.git").exists()
+
+
+def test_hooks_dir_accepts_absolute_git_hooks_path(tmp_path, monkeypatch):
+    repo = _make_git_repo(tmp_path)
+    hooks = tmp_path / "actual-hooks"
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=f"{hooks}\n")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert _hooks_dir(repo) == hooks.resolve()
+
 def test_hook_skips_head_on_exe():
     """Hook script must skip shebang extraction for .exe binaries (Windows)."""
     from graphify.hooks import _PYTHON_DETECT
     assert "*.exe) _SHEBANG=" in _PYTHON_DETECT or '*.exe)' in _PYTHON_DETECT
+
+
+def test_install_embeds_pinned_interpreter(tmp_path):
+    """Hook scripts must embed sys.executable so the hook works without the
+    graphify launcher on PATH (uv tool / pipx isolation, #1127).
+
+    When graphify is installed via `uv tool install graphifyy` or `pipx install
+    graphifyy`, the interpreter lives in an isolated venv and the launcher is in
+    ~/.local/bin.  GUI git clients and CI runners often run with a minimal PATH
+    that omits that directory, so `command -v graphify` fails, the python3/python
+    fallbacks cannot import graphify (wrong venv), and the hook silently exits 0.
+    Pinning sys.executable at install time makes the hook work regardless of PATH.
+    """
+    import re, sys
+    repo = _make_git_repo(tmp_path)
+    install(repo)
+    commit_hook = (repo / ".git" / "hooks" / "post-commit").read_text()
+    checkout_hook = (repo / ".git" / "hooks" / "post-checkout").read_text()
+    # Compute the sanitized value the same way install() does.
+    expected = sys.executable if not re.search(r"[^a-zA-Z0-9/_.@:\\-]", sys.executable) else ""
+    if expected:
+        assert expected in commit_hook, "sanitized sys.executable missing from post-commit"
+        assert expected in checkout_hook, "sanitized sys.executable missing from post-checkout"
+    # The placeholder must be fully substituted -- no __PINNED_PYTHON__ left.
+    assert "__PINNED_PYTHON__" not in commit_hook, "placeholder not substituted in post-commit"
+    assert "__PINNED_PYTHON__" not in checkout_hook, "placeholder not substituted in post-checkout"
+
+
+def test_install_fallback_is_loud_not_silent(tmp_path):
+    """The detection fallback must emit a message to stderr rather than bare exit 0.
+
+    A silent no-op (the pre-fix behaviour) leaves the user with no indication
+    that the hook ran but found nothing, making the bug extremely hard to diagnose.
+    """
+    from graphify.hooks import _PYTHON_DETECT
+    assert "could not locate" in _PYTHON_DETECT, (
+        "fallback branch must print a diagnostic message; bare 'exit 0' is silent and unhelpful"
+    )
+
+
+def test_hook_check_no_additionalContext(tmp_path):
+    """graphify hook-check must not emit additionalContext — Codex Desktop rejects it."""
+    import sys
+    out = tmp_path / "graphify-out"
+    out.mkdir()
+    (out / "graph.json").write_text("{}", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "graphify", "hook-check"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
