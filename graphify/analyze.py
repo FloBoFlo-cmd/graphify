@@ -82,26 +82,72 @@ def _is_json_key_node(G: nx.Graph, node_id: str) -> bool:
     return label in _JSON_NOISE_LABELS
 
 
-def god_nodes(G: nx.Graph, top_n: int = 10) -> list[dict]:
+# Labels that are never architecturally interesting no matter how connected:
+# bare stdlib/runtime imports that appear in almost every file, and YAML/config
+# boilerplate keys (hook configs etc.). Exact-match only - anything that is
+# merely *repetitive* (e.g. SKILL.md, command literals) is handled by the
+# label collapse in god_nodes() instead, so it stays visible with a count.
+_BOILERPLATE_LABELS: frozenset[str] = frozenset({
+    "path", "fs", "os", "sys", "json", "re",
+    "hooks:", "- type: command", '- matcher: "Write|Edit"', "PostToolUse:",
+})
+
+
+def _is_boilerplate_label(G: nx.Graph, node_id: str) -> bool:
+    label = (G.nodes[node_id].get("label") or "").strip()
+    return label in _BOILERPLATE_LABELS
+
+
+def god_nodes(G: nx.Graph, top_n: int = 10, collapse_labels: bool = True) -> list[dict]:
     """Return the top_n most-connected real entities - the core abstractions.
 
     File-level hub nodes are excluded: they accumulate import/contains edges
     mechanically and don't represent meaningful architectural abstractions.
+
+    When ``collapse_labels`` is True (default), nodes that share the same label
+    but have distinct ids (e.g. the same boilerplate command extracted from
+    many files) are collapsed into a single entry: the member with the highest
+    degree, annotated with ``collapsed_count`` and ``member_ids``. ``top_n``
+    then counts distinct labels. With ``collapse_labels=False`` the historical
+    one-entry-per-node behavior is preserved (no extra fields).
     """
     degree = dict(G.degree())
     sorted_nodes = sorted(degree.items(), key=lambda x: x[1], reverse=True)
-    result = []
+    if not collapse_labels:
+        result = []
+        for node_id, deg in sorted_nodes:
+            if (_is_file_node(G, node_id) or _is_concept_node(G, node_id)
+                    or _is_json_key_node(G, node_id) or _is_boilerplate_label(G, node_id)):
+                continue
+            result.append({
+                "id": node_id,
+                "label": G.nodes[node_id].get("label", node_id),
+                "degree": deg,
+            })
+            if len(result) >= top_n:
+                break
+        return result
+    # Group surviving nodes by label; sorted_nodes is degree-descending, so the
+    # first member of each group is the max-degree representative.
+    groups: dict[str, list[tuple[str, int]]] = {}
     for node_id, deg in sorted_nodes:
-        if _is_file_node(G, node_id) or _is_concept_node(G, node_id) or _is_json_key_node(G, node_id):
+        if (_is_file_node(G, node_id) or _is_concept_node(G, node_id)
+                or _is_json_key_node(G, node_id) or _is_boilerplate_label(G, node_id)):
             continue
-        result.append({
-            "id": node_id,
-            "label": G.nodes[node_id].get("label", node_id),
-            "degree": deg,
+        label = G.nodes[node_id].get("label", node_id)
+        groups.setdefault(label, []).append((node_id, deg))
+    entries = []
+    for label, members in groups.items():
+        rep_id, rep_deg = members[0]
+        entries.append({
+            "id": rep_id,
+            "label": label,
+            "degree": rep_deg,
+            "collapsed_count": len(members),
+            "member_ids": [m_id for m_id, _ in members],
         })
-        if len(result) >= top_n:
-            break
-    return result
+    entries.sort(key=lambda e: e["degree"], reverse=True)
+    return entries[:top_n]
 
 
 def surprising_connections(

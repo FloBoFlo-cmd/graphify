@@ -37,6 +37,62 @@ def test_god_nodes_have_required_keys():
     assert "degree" in result[0]
 
 
+def make_label_collision_graph():
+    """Three id-distinct nodes sharing the label 'dupe' plus a distinct hub."""
+    G = nx.Graph()
+    G.add_node("hub", label="CentralHub", file_type="code", source_file="hub.js")
+    for i in range(3):
+        G.add_node(f"dupe_{i}", label="dupe", file_type="code", source_file=f"file{i}.js")
+        G.add_edge(f"dupe_{i}", "hub", relation="calls")
+    # Extra fan-out so the hub outranks the dupes and dupe_0 outranks its twins.
+    for i in range(5):
+        G.add_node(f"leaf_{i}", label=f"Leaf{i}", file_type="code", source_file="leaves.js")
+        G.add_edge("hub", f"leaf_{i}", relation="calls")
+    G.add_edge("dupe_0", "leaf_0", relation="calls")
+    G.add_edge("dupe_0", "leaf_1", relation="calls")
+    return G
+
+
+def test_god_nodes_collapses_identical_labels():
+    G = make_label_collision_graph()
+    result = god_nodes(G, collapse_labels=True)
+    dupes = [r for r in result if r["label"] == "dupe"]
+    assert len(dupes) == 1
+    entry = dupes[0]
+    assert entry["collapsed_count"] == 3
+    assert sorted(entry["member_ids"]) == ["dupe_0", "dupe_1", "dupe_2"]
+    # Representative is the max-degree member.
+    assert entry["id"] == "dupe_0"
+    assert entry["degree"] == G.degree("dupe_0")
+    # Sorted by (max) degree descending.
+    degrees = [r["degree"] for r in result]
+    assert degrees == sorted(degrees, reverse=True)
+
+
+def test_god_nodes_collapse_labels_false_keeps_per_node_entries():
+    G = make_label_collision_graph()
+    result = god_nodes(G, collapse_labels=False)
+    dupes = [r for r in result if r["label"] == "dupe"]
+    assert len(dupes) == 3
+    for entry in result:
+        assert "collapsed_count" not in entry
+        assert "member_ids" not in entry
+
+
+def test_god_nodes_excludes_boilerplate_labels():
+    G = nx.Graph()
+    G.add_node("imp_path", label="path", file_type="code", source_file="a.js")
+    G.add_node("real", label="RealThing", file_type="code", source_file="a.js")
+    for i in range(5):
+        G.add_node(f"n_{i}", label=f"Node{i}", file_type="code", source_file="b.js")
+        G.add_edge("imp_path", f"n_{i}", relation="imports")
+        G.add_edge("real", f"n_{i}", relation="calls")
+    for collapse in (True, False):
+        labels = [r["label"] for r in god_nodes(G, collapse_labels=collapse)]
+        assert "path" not in labels
+        assert "RealThing" in labels
+
+
 def test_surprising_connections_cross_source_multi_file():
     """Multi-file graph: should find cross-file edges between real entities."""
     G = make_graph()

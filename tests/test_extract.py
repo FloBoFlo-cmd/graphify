@@ -1060,3 +1060,44 @@ def test_dart_child_node_ids_are_stem_based(tmp_path):
         )
 
 
+def test_extract_resolves_markdown_wikilink_to_references_edge(tmp_path):
+    (tmp_path / "a.md").write_text("# A\n\nSee [[b]] for details.\n")
+    (tmp_path / "b.md").write_text("# B\n\nContent.\n")
+
+    result = extract([tmp_path / "a.md", tmp_path / "b.md"], cache_root=tmp_path)
+
+    refs = [e for e in result["edges"] if e.get("relation") == "references"]
+    assert any(e["source"] == "a" and e["target"] == "b" for e in refs), (
+        f"expected references edge a->b, got {refs}"
+    )
+    # no pending markers leak into the final graph
+    assert not any(e.get("relation") == "_wikilink_pending" for e in result["edges"])
+    assert not any("_wikilink_slug" in e for e in result["edges"])
+
+
+def test_extract_drops_wikilink_to_missing_target(tmp_path):
+    (tmp_path / "a.md").write_text("# A\n\nSee [[nonexistent]].\n")
+
+    result = extract([tmp_path / "a.md"], cache_root=tmp_path)
+
+    assert not any(e.get("relation") == "references" for e in result["edges"])
+    assert not any(e.get("relation") == "_wikilink_pending" for e in result["edges"])
+
+
+def test_extract_drops_ambiguous_wikilink_slug(tmp_path):
+    # Two files share the basename "dupe" in different dirs -> ambiguous stem.
+    (tmp_path / "x/dupe.md").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "x/dupe.md").write_text("# Dupe X\n")
+    (tmp_path / "y/dupe.md").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "y/dupe.md").write_text("# Dupe Y\n")
+    (tmp_path / "a.md").write_text("# A\n\nLink to [[dupe]].\n")
+
+    result = extract(
+        [tmp_path / "a.md", tmp_path / "x/dupe.md", tmp_path / "y/dupe.md"],
+        cache_root=tmp_path,
+    )
+
+    # ambiguous -> dropped, not guessed
+    assert not any(e.get("relation") == "references" for e in result["edges"])
+
+

@@ -97,7 +97,11 @@ def generate(
         "## God Nodes (most connected - your core abstractions)",
     ]
     for i, node in enumerate(god_node_list, 1):
-        lines.append(f"{i}. `{node['label']}` - {node['degree']} edges")
+        line = f"{i}. `{node['label']}` - {node['degree']} edges"
+        collapsed = node.get("collapsed_count", 1)
+        if collapsed > 1:
+            line += f" (×{collapsed} Vorkommen)"
+        lines.append(line)
 
     lines += ["", "## Surprising Connections (you probably didn't know these)"]
     if surprise_list:

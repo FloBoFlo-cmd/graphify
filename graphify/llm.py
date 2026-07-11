@@ -1384,7 +1384,17 @@ def _community_label_lines(G, communities, gods, max_communities, top_k):
     representative node labels (god nodes first). Returns (lines, labeled_cids);
     skips communities with no resolvable nodes."""
     # gods may be node-id strings or god_nodes() dicts ({"id": ..., "label": ...}).
-    god_set = {g["id"] if isinstance(g, dict) else g for g in (gods or [])}
+    # Collapsed dicts (god_nodes(collapse_labels=True)) list every label-sharing
+    # node id in "member_ids"; expand them so labeling still ranks the raw
+    # per-id god nodes first and community labels don't drift when the
+    # report-side collapse is active.
+    god_set: set = set()
+    for g in gods or []:
+        if isinstance(g, dict):
+            god_set.add(g["id"])
+            god_set.update(g.get("member_ids") or ())
+        else:
+            god_set.add(g)
     ordered = sorted(communities.items(), key=lambda kv: -len(kv[1]))
     lines: list[str] = []
     labeled_cids: list[int] = []

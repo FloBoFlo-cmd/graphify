@@ -55,6 +55,19 @@ def test_report_shows_token_cost():
     assert "Token cost" in report
     assert "1,200" in report
 
+def test_report_renders_collapsed_god_node_count():
+    G, communities, cohesion, labels, gods, surprises, detection, tokens = make_inputs()
+    gods = [
+        {"id": "n1", "label": "eslint --fix", "degree": 12,
+         "collapsed_count": 15, "member_ids": [f"n{i}" for i in range(1, 16)]},
+        {"id": "n99", "label": "Unique", "degree": 8,
+         "collapsed_count": 1, "member_ids": ["n99"]},
+    ]
+    report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, "./project")
+    assert "`eslint --fix` - 12 edges (×15 Vorkommen)" in report
+    assert "`Unique` - 8 edges\n" in report
+    assert "`Unique` - 8 edges (×" not in report
+
 def test_report_shows_raw_cohesion_scores():
     G, communities, cohesion, labels, gods, surprises, detection, tokens = make_inputs()
     report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, "./project", min_community_size=1)

@@ -8393,6 +8393,18 @@ def extract_markdown(path: Path) -> dict:
         if in_code_block:
             continue
 
+        # Wikilinks [[slug]] / [[slug|alias]] / [[slug#heading]] become pending
+        # references edges. They are resolved to canonical file-node IDs in
+        # extract()'s post-pass — this function can't know the target's parent
+        # directory, and the target file may not be extracted yet.
+        for wl in re.finditer(r'\[\[([^\[\]]+)\]\]', line_text):
+            raw = wl.group(1).split('|')[0].split('#')[0].strip()
+            if raw:
+                edges.append({"source": file_nid, "target": file_nid,
+                              "relation": "_wikilink_pending", "confidence": "EXTRACTED",
+                              "source_file": str_path, "source_location": f"L{line_num}",
+                              "weight": 1.0, "_wikilink_slug": raw})
+
         # Detect headings: # Heading, ## Heading, etc.
         heading_match = re.match(r'^(#{1,6})\s+(.+)', line_text)
         if heading_match:
@@ -11064,6 +11076,44 @@ def extract(
                 "source_location": rc.get("source_location"),
                 "weight": 1.0,
             })
+
+    # Resolve Markdown wikilink edges ([[slug]]) emitted as pending by
+    # extract_markdown. Build a bare-stem -> file-node-id index from the scanned
+    # paths (Obsidian basename uniqueness). Ambiguous stems (same basename in two
+    # directories, e.g. MEMORY.md across spaces) are dropped, not guessed — a
+    # wrong edge is worse than a missing one.
+    if any(e.get("relation") == "_wikilink_pending" for e in all_edges):
+        wl_index: dict[str, list[str]] = {}
+        for p in paths:
+            try:
+                rel = p.relative_to(root)
+            except ValueError:
+                try:
+                    rel = p.resolve().relative_to(root)
+                except ValueError:
+                    continue
+            wl_index.setdefault(_make_id(p.stem), []).append(_file_node_id(rel))
+        node_ids = {n.get("id") for n in all_nodes}
+        resolved = dropped = 0
+        kept_edges: list[dict] = []
+        for e in all_edges:
+            if e.get("relation") != "_wikilink_pending":
+                kept_edges.append(e)
+                continue
+            slug = e.pop("_wikilink_slug", "")
+            targets = wl_index.get(_make_id(slug), [])
+            if len(targets) == 1 and targets[0] in node_ids and targets[0] != e.get("source"):
+                e["target"] = targets[0]
+                e["relation"] = "references"
+                kept_edges.append(e)
+                resolved += 1
+            else:
+                dropped += 1
+        all_edges = kept_edges
+        if resolved or dropped:
+            import logging
+            logging.getLogger(__name__).info(
+                "wikilinks: %d resolved, %d unresolved/ambiguous", resolved, dropped)
 
     # Relativize source_file fields so paths are portable across machines (#555)
     for item in all_nodes + all_edges:
