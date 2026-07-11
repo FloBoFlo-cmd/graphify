@@ -536,7 +536,13 @@ def _rebuild_code(
                         sf = n.get("source_file")
                         if not sf:
                             continue
-                        if Path(sf).suffix.lower() not in _CODE_EXTENSIONS:
+                        # Evict only sources we deterministically re-extract this
+                        # run (code + .md/.mdx/.qmd via extract_markdown). The old
+                        # _CODE_EXTENSIONS gate skipped documents, so nodes from
+                        # deleted Markdown files were never GC'd and accumulated
+                        # across runs. Semantic-only sources without an AST
+                        # extractor (.pdf, images) are still preserved.
+                        if _get_extractor(Path(sf)) is None:
                             continue
                         norm = _nsf(sf, _root_str)
                         if norm not in current_sources:

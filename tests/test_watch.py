@@ -207,6 +207,32 @@ def test_rebuild_code_evicts_nodes_from_deleted_files(tmp_path):
     assert "login()" in node_labels_after, "nodes from surviving file must be kept"
 
 
+def test_rebuild_code_evicts_nodes_from_deleted_markdown(tmp_path):
+    """Deleted Markdown files must be GC'd too. The #1007 eviction was gated on
+    _CODE_EXTENSIONS, which excludes .md, so nodes from deleted docs accumulated
+    forever even though .md is re-extracted via extract_markdown."""
+    import json
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+
+    (corpus / "keep.md").write_text("# Keep Heading\n", encoding="utf-8")
+    (corpus / "gone.md").write_text("# Gone Heading\n", encoding="utf-8")
+
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+    graph_path = corpus / "graphify-out" / "graph.json"
+    labels_before = {n["label"] for n in json.loads(graph_path.read_text(encoding="utf-8")).get("nodes", [])}
+    assert "Gone Heading" in labels_before
+
+    (corpus / "gone.md").unlink()
+
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+    labels_after = {n["label"] for n in json.loads(graph_path.read_text(encoding="utf-8")).get("nodes", [])}
+    assert "Gone Heading" not in labels_after, "stale heading node from deleted .md must be evicted"
+    assert "Keep Heading" in labels_after, "nodes from surviving .md must be kept"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="fcntl-only (POSIX)")
 def test_rebuild_lock_non_blocking_does_not_clobber_holder(tmp_path):
     """GH-858: a non-blocking caller that fails to acquire the lock must not
