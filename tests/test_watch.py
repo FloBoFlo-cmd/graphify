@@ -233,6 +233,44 @@ def test_rebuild_code_evicts_nodes_from_deleted_markdown(tmp_path):
     assert "Keep Heading" in labels_after, "nodes from surviving .md must be kept"
 
 
+def test_rebuild_code_prunes_hyperedge_members_of_deleted_nodes(tmp_path):
+    """R2: hyperedges merged from the old graph must not keep members that were
+    evicted this run. Prune dangling members; drop a hyperedge that ends up with
+    fewer than 2 live members."""
+    import json
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "keep.md").write_text("# Keep One\n\n# Keep Two\n", encoding="utf-8")
+    (corpus / "gone.md").write_text("# Gone One\n\n# Gone Two\n", encoding="utf-8")
+
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+    graph_path = corpus / "graphify-out" / "graph.json"
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    by_label = {n["label"]: n["id"] for n in data["nodes"]}
+    keep1, keep2 = by_label["Keep One"], by_label["Keep Two"]
+    gone1, gone2 = by_label["Gone One"], by_label["Gone Two"]
+
+    # Hyperedges only exist on the semantic (LLM) path; inject them into the
+    # persisted graph so the full-rebuild merge has something to reconcile.
+    data["hyperedges"] = [
+        {"id": "h_mixed", "label": "mixed", "nodes": [keep1, keep2, gone1], "relation": "co", "confidence": "HIGH"},
+        {"id": "h_doomed", "label": "doomed", "nodes": [gone1, gone2], "relation": "co", "confidence": "HIGH"},
+    ]
+    graph_path.write_text(json.dumps(data), encoding="utf-8")
+
+    (corpus / "gone.md").unlink()
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+
+    after = json.loads(graph_path.read_text(encoding="utf-8"))
+    hyper = {h["id"]: h for h in after.get("hyperedges", [])}
+    assert "h_doomed" not in hyper, "hyperedge with <2 live members must be dropped"
+    assert "h_mixed" in hyper, "hyperedge with >=2 surviving members must be kept"
+    assert gone1 not in hyper["h_mixed"]["nodes"], "evicted node must be pruned from hyperedge"
+    assert hyper["h_mixed"]["nodes"] == [keep1, keep2], "only live members remain"
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="fcntl-only (POSIX)")
 def test_rebuild_lock_non_blocking_does_not_clobber_holder(tmp_path):
     """GH-858: a non-blocking caller that fails to acquire the lock must not

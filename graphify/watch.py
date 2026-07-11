@@ -559,10 +559,22 @@ def _rebuild_code(
                     e for e in existing.get("links", existing.get("edges", []))
                     if e.get("source") in all_ids and e.get("target") in all_ids
                 ]
+                # Prune hyperedge members that point at evicted nodes, mirroring
+                # the edge filter above. Hyperedges connect N nodes, so losing one
+                # member should not drop the whole group; drop it only when fewer
+                # than 2 live members remain (a hyperedge needs >=2 to be a group).
+                preserved_hyperedges = []
+                for h in existing.get("hyperedges", []):
+                    members = [m for m in h.get("nodes", []) if m in all_ids]
+                    if len(members) < 2:
+                        continue
+                    if len(members) != len(h.get("nodes", [])):
+                        h = {**h, "nodes": members}
+                    preserved_hyperedges.append(h)
                 result = {
                     "nodes": result["nodes"] + preserved_nodes,
                     "edges": result["edges"] + preserved_edges,
-                    "hyperedges": existing.get("hyperedges", []),
+                    "hyperedges": preserved_hyperedges,
                     "input_tokens": 0,
                     "output_tokens": 0,
                 }
