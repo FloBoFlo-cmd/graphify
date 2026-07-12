@@ -1,0 +1,11 @@
+[
+  {
+    "name": "graphify",
+    "repo": "safishamsi/graphify",
+    "ref": "v8",
+    "last_sha": "eec7a0183847cbdc8a87d92b233759a5204b89fe",
+    "pull": "cd ~/tools/graphify-src && git fetch upstream && git rebase upstream/v8 && ~/.graphify-venv/bin/pip install -e .",
+    "note": "editable install; Feature god_nodes-collapse on top",
+    "rebase_check": { "src": "~/tools/graphify-src", "onto": "upstream/v8" }
+  }
+]
