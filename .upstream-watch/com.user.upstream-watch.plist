@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Local tier scheduler. Runs the aggregator weekly, INDEPENDENT of Claude being
+  open (this is why launchd, not CronCreate). Edit HOME paths below to your user
+  before `launchctl load`. See README.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.upstream-watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/USERNAME/.claude/.watch/upstream-watch.sh</string>
+    </array>
+
+    <!-- Monday 07:17 local. Off the :00 mark on purpose. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>1</integer>
+        <key>Hour</key><integer>7</integer>
+        <key>Minute</key><integer>17</integer>
+    </dict>
+
+    <!-- If the Mac was asleep at the fire time, run at next wake. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/.claude/.watch/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/.claude/.watch/launchd.log</string>
+
+    <!-- Ensure brew/npm/gh on PATH inside the launchd session. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
